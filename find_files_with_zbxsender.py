@@ -3,13 +3,15 @@
 """find coredump files
 
 Required:
-    Python 3.5 later if want to find files recursively
+    - zabbix-sender 4.0 or later
+    - Python 3.5 or later if want to find files recursively
 """
 import os, sys, glob, logging, argparse, functools, time, socket
 from subprocess import check_call, CalledProcessError
 
 INTIME = 1800.0
 PATTERN = "core*"
+IGNORE_LIST = r"{0}.ignore".format(os.path.splitext(os.path.abspath(__file__))[0])
 ZBXAGENT_CONF = "/etc/zabbix/zabbix_agentd.conf"
 ZBXITEMKEY_CORED = "vfs.file.coredump"
 
@@ -82,6 +84,23 @@ class CheckAction(argparse.Action):
         setattr(namespace, self.dest, values)
 
 
+def benchmark(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        start = 0
+        end = 0
+        start = time.time()
+        ret = fn(*args, **kwargs)
+        end = time.time()
+        print("{0}: {1}sec".format(fn.__name__, (end - start)))
+        return ret
+    return wrapper
+
+def init():
+    if not os.path.exists(IGNORE_LIST):
+        with open(IGNORE_LIST, 'w') as f:
+            pass
+
 @HandleExceptions(logger)
 def find_files(path, pattern):
     """finding files by matching pattern in the specified path 
@@ -103,6 +122,18 @@ def find_files(path, pattern):
     # pickup type=file only not type=directory
     files = [p for p in res if os.path.isfile(p)]
     return files
+
+@HandleExceptions(logger)
+def get_inode(filepath):
+    """Get inode of file.
+    
+    Args:
+        filepath (str): absolute path of a file
+
+    Returns:
+        [int] stat.ST_INO
+    """
+    return os.stat(filepath).st_ino
 
 @HandleExceptions(logger)
 def get_mtime(filepath):
@@ -197,7 +228,8 @@ if __name__ == "__main__":
         action=CheckAction, metavar='<ZBXAGENT_CONFIGPATH>',
         help='zabbix-agent config file path. default to {0}'.format(ZBXAGENT_CONF))
     args = parser.parse_args()
-    
+
+    init()
     # basepath find coredump
     findpath = args.path
     # item key
@@ -211,6 +243,10 @@ if __name__ == "__main__":
 
     # unixtime at now
     now = time.time()
+
+    # ignore file list
+    with open(IGNORE_LIST) as f:
+        ignore_list = f.readlines()
     result = list()
 
     # Argument validation
@@ -220,17 +256,26 @@ if __name__ == "__main__":
     # find coredump files
     coredumps = find_files(findpath, pattern)
 
-    # append latest coredump files to result list
     if not coredumps:
         logger.info("coredump file didn't found. this program exit")
         sys.exit(0)
+    # append latest coredump files to list which will be sent to zabbix-server
+    # old coredump files be skipped.
     for coredump in coredumps:
+        inode = get_inode(coredump)
+        # old files written in ignorefile  be skipped
+        if "{0} {1}\n".format(coredump, inode) in ignore_list:
+            continue
+        # new coredump append to processed list
         if is_mtime_intime(get_mtime(coredump), now, intime=intime):
-            logger.info("coredump file {0} has found within {1}.".format(coredump, intime))
+            logger.info("new coredump file {0} has found within {1}.".format(coredump, intime))
             result.append(coredump)
+        # old files append to ignorefile
         else:
-            logger.info("coredump file {0} has found, but within {1} then skip."
+            logger.info("new coredump file {0} has found, but within {1} then skip."
                 .format(coredump, intime))
+            with open(IGNORE_LIST, 'a') as f:
+                f.write("{0} {1}\n".format(coredump, inode))
     
     # send found coredump file path to zabbix-server.
     if result:
