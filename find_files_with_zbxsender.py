@@ -1,4 +1,4 @@
-#!/bin/python
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 """find coredump files
 
@@ -95,11 +95,6 @@ def benchmark(fn):
         print("{0}: {1}sec".format(fn.__name__, (end - start)))
         return ret
     return wrapper
-
-def init():
-    if not os.path.exists(IGNORE_LIST):
-        with open(IGNORE_LIST, 'w') as f:
-            pass
 
 @HandleExceptions(logger)
 def find_files(path, pattern):
@@ -211,6 +206,34 @@ def send_zabbix_server(value, key, agent_conf="/etc/zabbix/zabbix_agentd.conf"):
 
 ### main ###
 if __name__ == "__main__":
+
+    def __read_ignorelist():
+        lines = list()
+        with open(IGNORE_LIST) as f:
+            lines = f.readlines()
+        return lines
+
+    def init(args):
+        if not os.path.exists(IGNORE_LIST):
+            with open(IGNORE_LIST, 'w') as f:
+                pass
+
+        global findpath
+        global zbx_itemkey
+        global intime
+        global pattern
+        global zbxagent_conf
+        global now
+        global ignore_list
+
+        findpath = args.path
+        zbx_itemkey = args.key
+        intime = args.intime
+        pattern = args.pattern
+        zbxagent_conf = args.zbxagent_conf
+        now = time.time()
+        ignore_list = __read_ignorelist()
+
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str, help='Finds coredump under this path',
         action=CheckAction, metavar="<SEARCH_PATH>")
@@ -229,25 +252,25 @@ if __name__ == "__main__":
         help='zabbix-agent config file path. default to {0}'.format(ZBXAGENT_CONF))
     args = parser.parse_args()
 
-    init()
     # basepath find coredump
-    findpath = args.path
+    findpath = ""
     # item key
-    zbx_itemkey = args.key
+    zbx_itemkey = ""
     # intime
-    intime = float(args.intime)
+    intime = float()
     # pattern for pattern matching
-    pattern = args.pattern
+    pattern = ""
     # zabbix agent config file path
-    zbxagent_conf = args.zbxagent_conf
+    zbxagent_conf = ""
 
     # unixtime at now
-    now = time.time()
-
+    now = float()
     # ignore file list
-    with open(IGNORE_LIST) as f:
-        ignore_list = f.readlines()
+    ignore_list = list()
+    # result set
     result = list()
+
+    init(args)
 
     # Argument validation
     if not os.path.isdir(findpath):
